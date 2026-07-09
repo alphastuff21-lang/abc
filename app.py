@@ -1,8 +1,14 @@
+import socket
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 from stock_app import financials, news, price_data, recommender, scoring, ticker, valuation
+
+# 클라우드 배포 환경에서 국내 사이트(KRX/네이버) 접속이 지연되거나 막힐 경우
+# 타임아웃 없는 소켓 호출이 무한 대기(화면 멈춤)로 이어지는 것을 방지한다.
+socket.setdefaulttimeout(15)
 
 st.set_page_config(
     page_title="국내 주식 종목 분석/예측",
@@ -245,8 +251,12 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**🏆 시가총액 TOP 30**")
-    with st.spinner("시가총액 순위 불러오는 중..."):
-        top30 = ticker.top_by_marketcap(30)
+    try:
+        with st.spinner("시가총액 순위 불러오는 중..."):
+            top30 = ticker.top_by_marketcap(30)
+    except Exception:
+        top30 = []
+        st.caption("⚠️ 시가총액 순위를 불러오지 못했습니다. 네트워크 상태를 확인하거나 잠시 후 새로고침해주세요.")
     for i, row in enumerate(top30, start=1):
         marcap_trillion = row["Marcap"] / 1e12
         label = f"{i}. {row['Name']} · {marcap_trillion:,.0f}조"
@@ -261,8 +271,12 @@ if not run:
     render_recommendation_section()
     st.stop()
 
-with st.spinner("종목 코드 확인 중..."):
-    stock = ticker.resolve_code(query)
+try:
+    with st.spinner("종목 코드 확인 중..."):
+        stock = ticker.resolve_code(query)
+except Exception:
+    st.error("종목 정보를 불러오는 중 네트워크 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
+    st.stop()
 
 if not stock:
     st.error(f"'{query}'에 해당하는 종목을 찾을 수 없습니다.")
@@ -271,8 +285,12 @@ if not stock:
 code, name, market = stock["Code"], stock["Name"], stock["Market"]
 st.subheader(f"{name} ({code}) · {market}")
 
-with st.spinner("주가 데이터 수집 중..."):
-    price_df = price_data.get_price_history(code, years=years)
+try:
+    with st.spinner("주가 데이터 수집 중..."):
+        price_df = price_data.get_price_history(code, years=years)
+except Exception:
+    st.error("주가 데이터를 불러오는 중 네트워크 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
+    st.stop()
 
 if price_df.empty:
     st.error("주가 데이터를 가져오지 못했습니다.")
@@ -282,13 +300,21 @@ current_price = float(price_df.iloc[-1]["Close"])
 prev_close = float(price_df.iloc[-2]["Close"]) if len(price_df) > 1 else current_price
 day_change_pct = (current_price - prev_close) / prev_close * 100 if prev_close else 0.0
 
-with st.spinner("재무 실적 데이터 수집 중..."):
-    annual, quarterly = financials.get_financial_summary(code)
-    metrics = financials.extract_key_metrics(annual, quarterly)
+try:
+    with st.spinner("재무 실적 데이터 수집 중..."):
+        annual, quarterly = financials.get_financial_summary(code)
+        metrics = financials.extract_key_metrics(annual, quarterly)
+except Exception:
+    annual, quarterly, metrics = pd.DataFrame(), pd.DataFrame(), {}
+    st.warning("⚠️ 재무 데이터를 불러오지 못해 일부 점수가 중립값으로 계산됩니다.")
 
-with st.spinner("뉴스 및 호재/악재 분석 중..."):
-    news_df = news.get_recent_news(code, pages=news_pages)
-    news_result = news.score_news(news_df)
+try:
+    with st.spinner("뉴스 및 호재/악재 분석 중..."):
+        news_df = news.get_recent_news(code, pages=news_pages)
+        news_result = news.score_news(news_df)
+except Exception:
+    news_result = news.score_news(pd.DataFrame(columns=["title", "source", "date"]))
+    st.warning("⚠️ 뉴스 데이터를 불러오지 못해 뉴스 점수가 중립값(50점)으로 계산됩니다.")
 
 # 밸류에이션 비교 기준(역사적 평균 PER/PBR)을 먼저 구한 뒤 실적 점수에 반영
 val = valuation.estimate_target_price(annual, current_price, score=50)

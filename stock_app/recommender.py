@@ -54,7 +54,10 @@ def _score_one(code: str, name: str):
 @st.cache_data(ttl=3600, show_spinner=False)
 def build_recommendations(pool_size: int = 30, top_n: int = 10):
     """시가총액 상위 pool_size개 종목을 스캔해 종합 점수 상위 top_n개를 반환."""
-    pool = ticker.top_by_marketcap(pool_size)
+    try:
+        pool = ticker.top_by_marketcap(pool_size)
+    except Exception:
+        return []
     results = []
     for row in pool:
         try:
